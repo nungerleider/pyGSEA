@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+import pandas as pd
+import sys
+import os
+import argparse
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(description='Run GSEA')
+    parser.add_argument("-t", "--title", type=str, default="GSEA plot", help="The text you want as your GSEA plot title", metavar='')
+    parser.add_argument("-g1", "--group1_name", default="Group 1", type=str, help="The name of your group 1 samples (i.e. 'Control')", metavar='')
+    parser.add_argument("-g2", "--group2_name", default="Group 2", type=str, help="The name of your group 2 samples (i.e. 'Treated')", metavar='')
+    parser.add_argument("-c", "--column_separator",  type=int, required=True, help='The column number of your data.matrix file where the groups switch.\
+                        For example, entering "4" would imply columns 1-3 are samples from Group 1 and columns 4+ are samples from Group 2. Do not count the column with Gene names (which should be column 0 in this case.)', metavar='')
+    parser.add_argument("-dm", "--data_matrix", required=True, type=str, help='Path to data.matrix output file of the "rsem-generate-data-matrix" command.', metavar='')
+    parser.add_argument("-x", "--gmt", type=str, required=True, help='Path to the "gmt" file from the msigdb.')
+    parser.add_argument("-j", "--jar", type=str, required=True, help='Path to the "gsea.jar" file.')
+    return parser.parse_args()
+
+
+def process(df_path):
+
+    df = pd.read_table(df_path)
+    df[df.columns[0]] = df[df.columns[0]].map(lambda x:x.split('_')[1])
+    df = df.drop_duplicates(df.columns[0])
+    df = df.set_index(df.columns[0])
+
+    return df
+
+
+def set_gsea(df, column_split, group1_name, group2_name, title):
+    # group1/2 column arguments should be lists
+
+    new = pd.DataFrame()
+    new['NAME'] = df.index
+    new['DESCRIPTION'] = ['na'] * len(new.index)
+    new = new.set_index('NAME')
+    new[df.columns] = df
+    new.to_csv(title + '.txt',sep='\t')
+
+    group1_name = group1_name.replace(' ', '_')
+    group2_name = group2_name.replace(' ', '_')
+    
+    with open (title + '.cls','w') as cls:
+        cls.write('%i 2 1\n' % len(df.columns))
+        cls.write('# %s %s\n' % (group1_name, group2_name))
+        for i in range(column_split):
+            cls.write("%i " % 0)
+
+        for i in range(column_split, len(df.columns) - 1):
+            cls.write("%i " % 1)
+        cls.write("1")
+
+
+def main():
+
+    args = parse_args()
+    args.title = args.title.replace(' ', '_')
+    df = process(args.data_matrix)
+    if args.column_separator > len(df.columns):
+        sys.exit("Your dataframe has fewer samples than the number you supplied for '--column_separator'. Make sure your file is tab delimited and you have properly counted the columns.")
+    set_gsea(df=df, column_split=args.column_separator, group1_name=args.group1_name, group2_name=args.group2_name, title=args.title)
+    
+    os.system("java -cp '{jarfile}' -Xmx4000m xtools.gsea.Gsea -res '{title}.txt' -cls '{title}.cls' -gmx '{gmxfile}'  -collapse false -out '{title}' -permute gene_set".format(jarfile=args.jar, title=args.title, gmxfile=args.gmt))
+
+main()
